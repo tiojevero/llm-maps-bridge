@@ -1,0 +1,18 @@
+# Run the backend with: docker compose up --build
+# Then verify with:
+#   curl -X POST localhost:8000/places/search \
+#     -H 'Content-Type: application/json' \
+#     -d '{"query":"ramen","near":"Malang"}'
+#
+# NOTE: Ollama and Open WebUI are expected to run separately — they are not
+# part of this backend's container, since this project only owns the API.
+# When running this way, set BACKEND_API_URL=http://localhost:8000 in the
+# Open WebUI Tool so it reaches the containerized service.
+services:
+  api:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

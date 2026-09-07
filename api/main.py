@@ -79,6 +79,13 @@ def _server_misconfig_response(exc: Exception) -> JSONResponse:
     )
 
 
+def _bad_request(detail: str) -> JSONResponse:
+    """Return a 400 with ``detail`` — one shape for every input error."""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST, content={"detail": detail}
+    )
+
+
 def _resolve_provider() -> tuple[Any, JSONResponse | None]:
     """Resolve the configured provider, or a 502 response when misconfigured.
 
@@ -255,10 +262,7 @@ def search_places(body: SearchRequest) -> dict[str, Any] | JSONResponse:
     with empty results instead of a broken embed when nothing is found.
     """
     if not body.query or not body.query.strip():
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "query must be a non-empty string."},
-        )
+        return _bad_request("query must be a non-empty string.")
     near = body.near.strip() if body.near and body.near.strip() else None
     provider, error_response = _resolve_provider()
     if error_response is not None:
@@ -267,9 +271,7 @@ def search_places(body: SearchRequest) -> dict[str, Any] | JSONResponse:
     try:
         places = provider.find_places(body.query.strip(), near)
     except ValueError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)}
-        )
+        return _bad_request(str(exc))
     except NoResultsFoundError as exc:
         logger.info("no results for query=%r", body.query)
         return _empty_places_response(exc)
@@ -312,34 +314,19 @@ def search_nearby(body: NearbyRequest) -> dict[str, Any] | JSONResponse:
     me", distinct from a name/address search.
     """
     if not body.category or not body.category.strip():
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "category must be a non-empty string."},
-        )
+        return _bad_request("category must be a non-empty string.")
     try:
         lat, lng = float(body.lat), float(body.lng)
     except (TypeError, ValueError):
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "lat and lng must be numbers."},
-        )
+        return _bad_request("lat and lng must be numbers.")
     if not -90 <= lat <= 90 or not -180 <= lng <= 180:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "lat must be -90..90 and lng -180..180."},
-        )
+        return _bad_request("lat must be -90..90 and lng -180..180.")
     try:
         radius = int(body.radius_meters)
     except (TypeError, ValueError):
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "radius_meters must be an integer."},
-        )
+        return _bad_request("radius_meters must be an integer.")
     if not 1 <= radius <= 50000:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "radius_meters must be between 1 and 50000."},
-        )
+        return _bad_request("radius_meters must be between 1 and 50000.")
     provider, error_response = _resolve_provider()
     if error_response is not None:
         return error_response
@@ -347,9 +334,7 @@ def search_nearby(body: NearbyRequest) -> dict[str, Any] | JSONResponse:
     try:
         places = provider.find_nearby(body.category.strip(), lat, lng, radius)
     except ValueError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)}
-        )
+        return _bad_request(str(exc))
     except NoResultsFoundError as exc:
         logger.info("no nearby results for category=%r", body.category)
         return _empty_places_response(exc)
@@ -395,15 +380,9 @@ def get_directions(body: DirectionsRequest) -> dict[str, Any] | JSONResponse:
     location pin.
     """
     if not body.origin or not body.origin.strip():
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "origin must be a non-empty string."},
-        )
+        return _bad_request("origin must be a non-empty string.")
     if not body.destination_place_id or not body.destination_place_id.strip():
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "destination_place_id must be a non-empty string."},
-        )
+        return _bad_request("destination_place_id must be a non-empty string.")
     provider, error_response = _resolve_provider()
     if error_response is not None:
         return error_response
@@ -413,9 +392,7 @@ def get_directions(body: DirectionsRequest) -> dict[str, Any] | JSONResponse:
             body.origin.strip(), body.destination_place_id.strip()
         )
     except ValueError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)}
-        )
+        return _bad_request(str(exc))
     except (
         NoResultsFoundError,
         ProviderRateLimitedError,

@@ -9,6 +9,11 @@ the Admin UI > Tools), then enable it for your model.
 
 Rich UI Embedding convention: the tool returns the backend's
 ``embed_html`` so Open WebUI renders the inline map iframe in chat.
+
+NOTE: this file must stay self-contained (stdlib + httpx only) because
+it is copied verbatim into Open WebUI — it cannot import from ``api/``.
+All shared messages and backend-call handling therefore live as
+module-level constants/helpers below, used by every Tool method.
 """
 
 from __future__ import annotations
@@ -22,6 +27,119 @@ logger = logging.getLogger(__name__)
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000").rstrip("/")
 REQUEST_TIMEOUT_SECONDS = 20
+
+# ---------------------------------------------------------------------------
+# User-facing messages — each distinct string is defined exactly once.
+# ---------------------------------------------------------------------------
+
+_MSG_UNREACHABLE = (
+    "The places service is currently unreachable. "
+    "Please make sure the backend API is running and try again."
+)
+_MSG_TIMEOUT = "The places service timed out. Please try again in a moment."
+_MSG_HTTP = "Could not reach the places service. Please try again later."
+_MSG_RATE_LIMITED = "Too many requests right now — please wait a bit and try again."
+_MSG_BACKEND_ERROR = "The places service returned an error. Please try again later."
+_MSG_BAD_RESPONSE = "The places service returned an unexpected response."
+_MSG_NO_RESULTS = "No places found. Try a different search."
+
+
+# ---------------------------------------------------------------------------
+# Shared backend-call handling — one implementation for all Tool methods.
+# ---------------------------------------------------------------------------
+
+
+def _post_backend(path: str, payload: dict) -> httpx.Response | str:
+    """POST ``payload`` to the backend, mapping transport errors to messages.
+
+    Returns the response on success, or a user-facing error string that
+    the caller should return directly (checked via ``isinstance(..., str)``).
+    """
+    try:
+        return httpx.post(
+            f"{BACKEND_API_URL}{path}", json=payload, timeout=REQUEST_TIMEOUT_SECONDS
+        )
+    except httpx.ConnectError:
+        logger.error("backend unreachable at %s", BACKEND_API_URL)
+        return _MSG_UNREACHABLE
+    except httpx.TimeoutException:
+        logger.error("backend request timed out")
+        return _MSG_TIMEOUT
+    except httpx.HTTPError as exc:
+        logger.error("backend request failed: %s", type(exc).__name__)
+        return _MSG_HTTP
+
+
+def _response_detail(resp: httpx.Response, default: str) -> str:
+    """Extract ``detail`` from a search/nearby error body.
+
+    Falls back to the response text, then ``default`` — matching the
+    original per-method handling exactly.
+    """
+    try:
+        detail = resp.json().get("detail", default)
+    except ValueError:
+        detail = resp.text or default
+    return detail if isinstance(detail, str) else default
+
+
+def _directions_detail(resp: httpx.Response) -> str:
+    """Extract ``detail`` from a directions error body (no text fallback)."""
+    try:
+        detail = resp.json().get("detail", "backend error")
+    except ValueError:
+        detail = "backend error"
+    return detail if isinstance(detail, str) else "backend error"
+
+
+def _status_error(resp: httpx.Response, *, invalid_prefix: str | None) -> str | None:
+    """Map non-200 statuses to a user message, or ``None`` when OK.
+
+    ``invalid_prefix`` labels 400s (e.g. ``"Invalid search request"``).
+    When ``None`` (directions), every non-200 uses the ``"Could not get
+    directions: ..."`` shape instead of a separate 400 branch.
+    """
+    if resp.status_code == 429:
+        return _MSG_RATE_LIMITED
+    if resp.status_code != 200:
+        if invalid_prefix is None:
+            return f"Could not get directions: {_directions_detail(resp)}"
+        if resp.status_code == 400:
+            return f"{invalid_prefix}: {_response_detail(resp, 'bad request')}"
+        return _MSG_BACKEND_ERROR
+    return None
+
+
+def _decode_body(resp: httpx.Response) -> tuple[dict | None, str | None]:
+    """Decode a 200 body, returning ``(data, None)`` or ``(None, message)``."""
+    try:
+        return resp.json(), None
+    except ValueError:
+        logger.error("backend returned non-JSON response")
+        return None, _MSG_BAD_RESPONSE
+
+
+def _render_places(data: dict, *, header_prefix: str) -> str:
+    """Render a search/nearby payload as header + embed + fallback link."""
+    embed_html = data.get("embed_html", "")
+    fallback_link = data.get("fallback_link", "")
+    results = data.get("results", [])
+
+    if not results:
+        # Backend returns a friendly plain-text message in embed_html
+        # when nothing was found.
+        return embed_html or _MSG_NO_RESULTS
+
+    names = ", ".join(r.get("name", "?") for r in results[:3])
+    suffix = (
+        f'<p><a href="{fallback_link}" target="_blank">Open in Google Maps</a></p>'
+        if fallback_link
+        else ""
+    )
+    header = f"<p>{header_prefix}: {names}</p>" if names else ""
+    # Returned with Content-Disposition: inline by Open WebUI's
+    # HTMLResponse wrapper so the iframe renders in chat.
+    return f"{header}{embed_html}{suffix}"
 
 
 class Tools:
@@ -45,58 +163,16 @@ class Tools:
         if near and near.strip():
             payload["near"] = near.strip()
 
-        url = f"{BACKEND_API_URL}/places/search"
-        try:
-            resp = httpx.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
-        except httpx.ConnectError:
-            logger.error("backend unreachable at %s", BACKEND_API_URL)
-            return (
-                "The places service is currently unreachable. "
-                "Please make sure the backend API is running and try again."
-            )
-        except httpx.TimeoutException:
-            logger.error("backend request timed out")
-            return "The places service timed out. Please try again in a moment."
-        except httpx.HTTPError as exc:
-            logger.error("backend request failed: %s", type(exc).__name__)
-            return "Could not reach the places service. Please try again later."
-
-        if resp.status_code == 429:
-            return "Too many requests right now — please wait a bit and try again."
-        if resp.status_code == 400:
-            try:
-                detail = resp.json().get("detail", "bad request")
-            except ValueError:
-                detail = resp.text or "bad request"
-            return f"Invalid search request: {detail}"
-        if resp.status_code != 200:
-            return "The places service returned an error. Please try again later."
-
-        try:
-            data = resp.json()
-        except ValueError:
-            logger.error("backend returned non-JSON response")
-            return "The places service returned an unexpected response."
-
-        embed_html = data.get("embed_html", "")
-        fallback_link = data.get("fallback_link", "")
-        results = data.get("results", [])
-
-        if not results:
-            # Backend returns a friendly plain-text message in embed_html
-            # when nothing was found.
-            return embed_html or "No places found. Try a different search."
-
-        names = ", ".join(r.get("name", "?") for r in results[:3])
-        suffix = (
-            f'<p><a href="{fallback_link}" target="_blank">Open in Google Maps</a></p>'
-            if fallback_link
-            else ""
-        )
-        header = f"<p>Found: {names}</p>" if names else ""
-        # Returned with Content-Disposition: inline by Open WebUI's
-        # HTMLResponse wrapper so the iframe renders in chat.
-        return f"{header}{embed_html}{suffix}"
+        resp = _post_backend("/places/search", payload)
+        if isinstance(resp, str):
+            return resp
+        if (error := _status_error(resp, invalid_prefix="Invalid search request")):
+            return error
+        data, decode_error = _decode_body(resp)
+        if decode_error is not None:
+            return decode_error
+        assert data is not None
+        return _render_places(data, header_prefix="Found")
 
     def find_nearby(
         self, category: str, lat: float, lng: float, radius_meters: int = 1500
@@ -117,63 +193,24 @@ class Tools:
         if not category or not category.strip():
             return "Please provide a place category, e.g. 'restaurant'."
 
-        url = f"{BACKEND_API_URL}/places/nearby"
-        try:
-            resp = httpx.post(
-                url,
-                json={
-                    "category": category.strip(),
-                    "lat": lat,
-                    "lng": lng,
-                    "radius_meters": radius_meters,
-                },
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
-        except httpx.ConnectError:
-            logger.error("backend unreachable at %s", BACKEND_API_URL)
-            return (
-                "The places service is currently unreachable. "
-                "Please make sure the backend API is running and try again."
-            )
-        except httpx.TimeoutException:
-            logger.error("backend request timed out")
-            return "The places service timed out. Please try again in a moment."
-        except httpx.HTTPError as exc:
-            logger.error("backend request failed: %s", type(exc).__name__)
-            return "Could not reach the places service. Please try again later."
-
-        if resp.status_code == 429:
-            return "Too many requests right now — please wait a bit and try again."
-        if resp.status_code == 400:
-            try:
-                detail = resp.json().get("detail", "bad request")
-            except ValueError:
-                detail = resp.text or "bad request"
-            return f"Invalid nearby request: {detail}"
-        if resp.status_code != 200:
-            return "The places service returned an error. Please try again later."
-
-        try:
-            data = resp.json()
-        except ValueError:
-            logger.error("backend returned non-JSON response")
-            return "The places service returned an unexpected response."
-
-        embed_html = data.get("embed_html", "")
-        fallback_link = data.get("fallback_link", "")
-        results = data.get("results", [])
-
-        if not results:
-            return embed_html or "No places found. Try a different search."
-
-        names = ", ".join(r.get("name", "?") for r in results[:3])
-        suffix = (
-            f'<p><a href="{fallback_link}" target="_blank">Open in Google Maps</a></p>'
-            if fallback_link
-            else ""
+        resp = _post_backend(
+            "/places/nearby",
+            {
+                "category": category.strip(),
+                "lat": lat,
+                "lng": lng,
+                "radius_meters": radius_meters,
+            },
         )
-        header = f"<p>Found nearby: {names}</p>" if names else ""
-        return f"{header}{embed_html}{suffix}"
+        if isinstance(resp, str):
+            return resp
+        if (error := _status_error(resp, invalid_prefix="Invalid nearby request")):
+            return error
+        data, decode_error = _decode_body(resp)
+        if decode_error is not None:
+            return decode_error
+        assert data is not None
+        return _render_places(data, header_prefix="Found nearby")
 
     def get_directions(self, origin: str, destination_place_id: str) -> str:
         """Show a route from an origin to a previously found place.
@@ -191,40 +228,21 @@ class Tools:
         if not destination_place_id or not destination_place_id.strip():
             return "Please provide the destination place_id from a search result."
 
-        url = f"{BACKEND_API_URL}/places/directions"
-        try:
-            resp = httpx.post(
-                url,
-                json={
-                    "origin": origin.strip(),
-                    "destination_place_id": destination_place_id.strip(),
-                },
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
-        except httpx.ConnectError:
-            logger.error("backend unreachable at %s", BACKEND_API_URL)
-            return (
-                "The places service is currently unreachable. Please try again later."
-            )
-        except httpx.TimeoutException:
-            return "The places service timed out. Please try again in a moment."
-        except httpx.HTTPError as exc:
-            logger.error("backend request failed: %s", type(exc).__name__)
-            return "Could not reach the places service. Please try again later."
-
-        if resp.status_code == 429:
-            return "Too many requests right now — please wait a bit and try again."
-        if resp.status_code != 200:
-            try:
-                detail = resp.json().get("detail", "backend error")
-            except ValueError:
-                detail = "backend error"
-            return f"Could not get directions: {detail}"
-
-        try:
-            data = resp.json()
-        except ValueError:
-            return "The places service returned an unexpected response."
+        resp = _post_backend(
+            "/places/directions",
+            {
+                "origin": origin.strip(),
+                "destination_place_id": destination_place_id.strip(),
+            },
+        )
+        if isinstance(resp, str):
+            return resp
+        if (error := _status_error(resp, invalid_prefix=None)):
+            return error
+        data, decode_error = _decode_body(resp)
+        if decode_error is not None:
+            return decode_error
+        assert data is not None
 
         summary = f"<p>Distance: {data.get('distance', '?')} • Duration: {data.get('duration', '?')}</p>"
         return f"{summary}{data.get('directions_embed_html', '')}"

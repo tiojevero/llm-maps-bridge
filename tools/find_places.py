@@ -120,7 +120,13 @@ def _decode_body(resp: httpx.Response) -> tuple[dict | None, str | None]:
 
 
 def _render_places(data: dict, *, header_prefix: str) -> str:
-    """Render a search/nearby payload as header + embed + fallback link."""
+    """Render a search/nearby payload as header + embed + fallback link.
+
+    Each result is listed with its raw ``place_id`` in plain text. This
+    matters: the model must copy that literal into ``get_directions``,
+    and the only other place the id appears (URL-encoded inside the
+    iframe ``src``) is not safe to copy.
+    """
     embed_html = data.get("embed_html", "")
     fallback_link = data.get("fallback_link", "")
     results = data.get("results", [])
@@ -130,13 +136,16 @@ def _render_places(data: dict, *, header_prefix: str) -> str:
         # when nothing was found.
         return embed_html or _MSG_NO_RESULTS
 
-    names = ", ".join(r.get("name", "?") for r in results[:3])
+    items = "".join(
+        f"<li>{r.get('name', '?')} — place_id: {r.get('place_id', '')}</li>"
+        for r in results[:5]
+    )
     suffix = (
         f'<p><a href="{fallback_link}" target="_blank">Open in Google Maps</a></p>'
         if fallback_link
         else ""
     )
-    header = f"<p>{header_prefix}: {names}</p>" if names else ""
+    header = f"<p>{header_prefix}:</p><ol>{items}</ol>" if items else ""
     # Returned with Content-Disposition: inline by Open WebUI's
     # HTMLResponse wrapper so the iframe renders in chat.
     return f"{header}{embed_html}{suffix}"
@@ -219,7 +228,10 @@ class Tools:
         directions, e.g. "how do I get there from Malang station?".
 
         :param origin: Route origin, e.g. "Malang station".
-        :param destination_place_id: The place_id from a find_places result.
+        :param destination_place_id: The place_id copied exactly as shown
+            in the find_places/find_nearby result list (e.g. "node/12345").
+            Copy it literally — do not take it from the map iframe URL,
+            where it appears URL-encoded.
         :return: HTML string with an embedded directions iframe, or a
             clear error message.
         """

@@ -10,7 +10,9 @@ for identical queries.
 
 from __future__ import annotations
 
+import html
 import logging
+import re
 import urllib.parse
 
 import googlemaps
@@ -127,6 +129,11 @@ def _validate_coords(lat: float, lng: float) -> None:
 def clear_cache() -> None:
     """Clear the in-memory places cache (useful in tests)."""
     _places_cache.clear()
+
+
+def _strip_html(instructions: str) -> str:
+    """Strip HTML tags from Directions ``html_instructions`` to plain text."""
+    return html.unescape(re.sub(r"<[^>]+>", "", instructions or "")).strip()
 
 
 class GoogleMapsProvider(PlacesProvider):
@@ -280,9 +287,16 @@ class GoogleMapsProvider(PlacesProvider):
         leg = (routes[0].get("legs") or [{}])[0]
         distance = (leg.get("distance") or {}).get("text", "unknown distance")
         duration = (leg.get("duration") or {}).get("text", "unknown duration")
+        steps: list[str] = []
+        for route_leg in routes[0].get("legs", []):
+            for step in route_leg.get("steps", []):
+                text = _strip_html(step.get("html_instructions", ""))
+                if text:
+                    steps.append(text)
         return {
             "distance": distance,
             "duration": duration,
             "origin": origin,
             "destination_place_id": destination_place_id,
+            "steps": steps,
         }

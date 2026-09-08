@@ -200,9 +200,29 @@ class SearchResponse(BaseModel):
 class DirectionsResponse(BaseModel):
     """Success payload for POST /places/directions."""
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "directions_embed_html": "<iframe ...></iframe>",
+                    "distance": "2.1 km",
+                    "duration": "9 mins",
+                    "steps": [
+                        "Head onto Jl. Merdeka for 300m",
+                        "Turn right onto Jl. Sudirman for 150m",
+                        "Arrive at your destination",
+                    ],
+                }
+            ]
+        }
+    }
+
     directions_embed_html: str = Field(..., description="Embeddable route iframe")
     distance: str = Field(..., description="Route distance, e.g. '2.1 km'")
     duration: str = Field(..., description="Route duration, e.g. '9 mins'")
+    steps: list[str] = Field(
+        ..., description="Turn-by-turn instructions in route order"
+    )
 
 
 class HealthResponse(BaseModel):
@@ -410,4 +430,5 @@ def get_directions(body: DirectionsRequest) -> dict[str, Any] | JSONResponse:
         "directions_embed_html": directions_embed_html,
         "distance": route["distance"],
         "duration": route["duration"],
+        "steps": route["steps"],
     }

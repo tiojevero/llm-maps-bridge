@@ -6,9 +6,9 @@ never branches on which provider is active:
 - ``find_places`` / ``find_nearby`` -> ``list[dict]`` with keys
   ``name, address, lat, lng, place_id, maps_url``.
 - ``get_directions`` -> ``dict`` with keys
-  ``distance, duration, origin, destination_place_id`` (the distance /
-  duration core both providers produce; the API layer derives the
-  embeddable map from origin + destination).
+  ``distance, duration, origin, destination_place_id`` plus ``steps``
+  (ordered plain-language turn-by-turn instructions). The API layer
+  derives the embeddable map from origin + destination.
 
 Exception naming: the canonical shared set is
 ``NoResultsFoundError``, ``ProviderRateLimitedError`` and
@@ -136,7 +136,9 @@ class PlacesProvider(abc.ABC):
                 or ``find_nearby`` result.
 
         Returns:
-            Dict with ``distance, duration, origin, destination_place_id``.
+            Dict with ``distance, duration, origin, destination_place_id``
+            plus ``steps``, an ordered list of plain-language
+            turn-by-turn instructions.
 
         Raises:
             ValueError: If inputs are empty.

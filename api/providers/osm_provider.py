@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import urllib.parse
 
 import httpx
 
@@ -294,6 +295,48 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes} mins"
 
 
+# OSRM maneuver types mapped to plain-language verbs. Deliberately
+# small — unknown types fall back to a title-cased version of the raw
+# type string, so new maneuver types still produce readable output.
+_OSRM_MANEUVER_VERBS = {
+    "depart": "Head",
+    "arrive": "Arrive",
+    "turn": "Turn",
+    "new name": "Continue",
+    "merge": "Merge",
+    "roundabout": "Enter the roundabout",
+    "rotary": "Enter the rotary",
+    "exit roundabout": "Exit the roundabout",
+    "exit rotary": "Exit the rotary",
+}
+
+
+def _format_osrm_step(step: dict) -> str:
+    """Format one OSRM route step as a plain-language instruction."""
+    maneuver = step.get("maneuver") or {}
+    step_type = str(maneuver.get("type", "") or "").lower()
+    modifier = str(maneuver.get("modifier", "") or "").strip()
+    street = str(step.get("name", "") or "").strip()
+    try:
+        distance_m = int(float(step.get("distance", 0)))
+    except (TypeError, ValueError):
+        distance_m = 0
+
+    if step_type == "arrive":
+        return f"Arrive at {street}" if street else "Arrive at your destination"
+    verb = _OSRM_MANEUVER_VERBS.get(
+        step_type, step_type.replace("_", " ").title() or "Continue"
+    )
+    parts = verb
+    if modifier and step_type in ("turn", "merge"):
+        parts += f" {modifier}"
+    if street:
+        parts += f" onto {street}"
+    if distance_m > 0:
+        parts += f" for {distance_m}m"
+    return parts
+
+
 def clear_cache() -> None:
     """Clear the search cache and coords registry (useful in tests)."""
     _places_cache.clear()
@@ -398,6 +441,9 @@ class OsmProvider(PlacesProvider):
             destination_place_id, "destination_place_id"
         )
 
+        # Tolerate URL-encoded ids (e.g. "node%2F12345" scraped from an
+        # embed URL): the registry keys are the raw "type/id" form.
+        destination_place_id = urllib.parse.unquote(destination_place_id)
         dest = _coords_registry.get(destination_place_id)
         if dest is None:
             raise NoResultsFoundError(
@@ -422,7 +468,9 @@ class OsmProvider(PlacesProvider):
         route_url = f"{OSRM_ROUTE_URL}/{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
         data = fetch_json(
             "OSRM",
-            lambda: _http_get(route_url, params={"overview": "false"}),
+            lambda: _http_get(
+                route_url, params={"overview": "false", "steps": "true"}
+            ),
         )
 
         routes = (data or {}).get("routes", [])
@@ -431,9 +479,15 @@ class OsmProvider(PlacesProvider):
                 "No route found for the given origin/destination."
             )
 
+        steps: list[str] = []
+        for leg in routes[0].get("legs", []):
+            for step in leg.get("steps", []):
+                steps.append(_format_osrm_step(step))
+
         return {
             "distance": _format_distance(float(routes[0].get("distance", 0))),
             "duration": _format_duration(float(routes[0].get("duration", 0))),
             "origin": origin,
             "destination_place_id": destination_place_id,
+            "steps": steps,
         }

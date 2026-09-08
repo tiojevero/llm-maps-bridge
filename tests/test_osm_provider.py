@@ -25,7 +25,42 @@ NOMINATIM_ITEM = {
     "display_name": "Sushi Place, Jl. Test No. 1, Malang, Indonesia",
 }
 
-OSRM_OK = {"code": "Ok", "routes": [{"distance": 2100.0, "duration": 540.0}]}
+OSRM_OK = {
+    "code": "Ok",
+    "routes": [
+        {
+            "distance": 2100.0,
+            "duration": 540.0,
+            "legs": [
+                {
+                    "steps": [
+                        {
+                            "distance": 300.0,
+                            "name": "Jl. Merdeka",
+                            "maneuver": {"type": "depart", "modifier": "straight"},
+                        },
+                        {
+                            "distance": 150.0,
+                            "name": "Jl. Sudirman",
+                            "maneuver": {"type": "turn", "modifier": "right"},
+                        },
+                        {
+                            "distance": 0.0,
+                            "name": "",
+                            "maneuver": {"type": "arrive"},
+                        },
+                    ]
+                }
+            ],
+        }
+    ],
+}
+
+EXPECTED_STEPS = [
+    "Head onto Jl. Merdeka for 300m",
+    "Turn right onto Jl. Sudirman for 150m",
+    "Arrive at your destination",
+]
 
 OVERPASS_OK = {
     "elements": [
@@ -157,19 +192,83 @@ def test_get_directions_success(provider: OsmProvider) -> None:
             _mock_response([origin_item]),  # origin geocode
             _mock_response(OSRM_OK),  # OSRM route
         ],
-    ):
+    ) as http_get:
         places = provider.find_places("sushi", "Malang")
         route = provider.get_directions("Malang station", places[0]["place_id"])
     assert route["distance"] == "2.1 km"
     assert route["duration"] == "9 mins"
     assert route["origin"] == "Malang station"
     assert route["destination_place_id"] == "node/12345"
+    assert route["steps"] == EXPECTED_STEPS
+    # steps=true must be requested from OSRM (overview=false is kept).
+    _, kwargs = http_get.call_args
+    assert kwargs["params"] == {"overview": "false", "steps": "true"}
 
 
 def test_get_directions_unknown_place_id(provider: OsmProvider) -> None:
     """A place_id never returned by find_places raises NoResultsFoundError."""
     with pytest.raises(NoResultsFoundError):
         provider.get_directions("Malang station", "no-such-place")
+
+
+def test_format_osrm_step_edge_cases() -> None:
+    """Step formatter handles roundabouts, unknown types, missing names."""
+    from api.providers.osm_provider import _format_osrm_step
+
+    assert (
+        _format_osrm_step(
+            {
+                "distance": 120.0,
+                "name": "Jl. Merdeka",
+                "maneuver": {"type": "roundabout", "modifier": "straight"},
+            }
+        )
+        == "Enter the roundabout onto Jl. Merdeka for 120m"
+    )
+    assert (
+        _format_osrm_step(
+            {
+                "distance": 50.0,
+                "name": "Jl. Sudirman",
+                "maneuver": {"type": "some_future_type"},
+            }
+        )
+        == "Some Future Type onto Jl. Sudirman for 50m"
+    )
+    assert (
+        _format_osrm_step({"distance": 10.0, "maneuver": {"type": "turn"}})
+        == "Turn for 10m"
+    )
+
+
+def test_get_directions_accepts_url_encoded_place_id(
+    provider: OsmProvider,
+) -> None:
+    """An id scraped URL-encoded from an embed URL still resolves.
+
+    Regression test: the model once passed "node%2F12345" (copied from
+    the iframe src) instead of "node/12345" and got Unknown destination.
+    """
+    origin_item = dict(
+        NOMINATIM_ITEM,
+        osm_id=999,
+        lat="-7.97",
+        lon="112.60",
+        display_name="Malang station, Malang, Indonesia",
+    )
+    with patch.object(
+        osm_provider,
+        "_http_get",
+        side_effect=[
+            _mock_response([NOMINATIM_ITEM]),  # find_places search
+            _mock_response([origin_item]),  # origin geocode
+            _mock_response(OSRM_OK),  # OSRM route
+        ],
+    ):
+        provider.find_places("sushi", "Malang")
+        route = provider.get_directions("Malang station", "node%2F12345")
+    assert route["destination_place_id"] == "node/12345"
+    assert route["distance"] == "2.1 km"
 
 
 def test_get_directions_no_route(provider: OsmProvider) -> None:

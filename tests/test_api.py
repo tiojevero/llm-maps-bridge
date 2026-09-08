@@ -33,6 +33,10 @@ SAMPLE_ROUTE = {
     "duration": "9 mins",
     "origin": "Malang station",
     "destination_place_id": "abc123",
+    "steps": [
+        "Head onto Jl. Merdeka for 300m",
+        "Turn right onto Jl. Sudirman for 150m",
+    ],
 }
 
 
@@ -118,6 +122,7 @@ def test_directions_success(client: TestClient, mock_provider: MagicMock) -> Non
     assert "<iframe" in data["directions_embed_html"]
     assert data["distance"] == "2.1 km"
     assert data["duration"] == "9 mins"
+    assert data["steps"] == SAMPLE_ROUTE["steps"]
 
 
 def test_directions_empty_origin_returns_400(

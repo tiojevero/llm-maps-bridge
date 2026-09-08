@@ -196,3 +196,49 @@ def test_find_nearby_invalid_inputs(provider: GoogleMapsProvider) -> None:
         provider.find_nearby("pharmacy", -91.0, 112.62)
     with pytest.raises(ValueError):
         provider.find_nearby("pharmacy", -7.98, 112.62, 0)
+
+
+DIRECTIONS_RESPONSE = [
+    {
+        "legs": [
+            {
+                "distance": {"text": "2.1 km"},
+                "duration": {"text": "9 mins"},
+                "steps": [
+                    {
+                        "html_instructions": "Head <b>north</b> on Jl. Merdeka",
+                    },
+                    {
+                        "html_instructions": "Turn <b>right</b> onto Jl. Sudirman",
+                    },
+                ],
+            }
+        ]
+    }
+]
+
+
+def test_get_directions_success_includes_steps(
+    provider: GoogleMapsProvider,
+) -> None:
+    """Directions returns distance/duration plus plain-text steps."""
+    client = MagicMock()
+    client.directions.return_value = DIRECTIONS_RESPONSE
+    with patch.object(google_provider, "_get_client", return_value=client):
+        route = provider.get_directions("Malang station", "abc123")
+    client.directions.assert_called_once_with("Malang station", "place_id:abc123")
+    assert route["distance"] == "2.1 km"
+    assert route["duration"] == "9 mins"
+    assert route["steps"] == [
+        "Head north on Jl. Merdeka",
+        "Turn right onto Jl. Sudirman",
+    ]
+
+
+def test_get_directions_no_route(provider: GoogleMapsProvider) -> None:
+    """An empty routes list raises NoResultsFoundError."""
+    client = MagicMock()
+    client.directions.return_value = []
+    with patch.object(google_provider, "_get_client", return_value=client):
+        with pytest.raises(NoResultsFoundError):
+            provider.get_directions("Malang station", "abc123")

@@ -24,15 +24,16 @@ This project lets a local LLM (running via Ollama, used through Open WebUI) answ
    ```bash
    pip install -r requirements.txt
    ```
-3. Copy the example env and fill in your key:
+3. (Optional) Configure the environment:
    ```bash
    cp .env.example .env
-   # edit .env: optionally set BACKEND_API_URL, rate limits
+   # edit .env only if you want to change the defaults
    ```
-   This works out of the box with no API key — it defaults to free
-   OpenStreetMap data. To use Google Maps instead, set
-   `MAPS_PROVIDER=google` and `GOOGLE_MAPS_API_KEY` in `.env`.
-   Switching providers requires no code changes, just the two env vars above.
+   No configuration is needed to run the app — it defaults to free
+   OpenStreetMap data with zero setup, and a clean `git clone` works
+   immediately. Only create/edit `.env` if you want to configure
+   something, e.g. set `MAPS_PROVIDER=google` and `GOOGLE_MAPS_API_KEY`
+   to use Google Maps instead (no code changes needed).
 4. Run the backend:
    ```bash
    uvicorn api.main:app --reload
@@ -41,8 +42,9 @@ This project lets a local LLM (running via Ollama, used through Open WebUI) answ
    ```bash
    docker compose up --build
    ```
-   This builds the `api` image and starts it on port 8000 using the
-   variables in your `.env` file. Ollama and Open WebUI still run
+   This builds the `api` image and starts it on port 8000, using your
+   `.env` file if present (all settings have working defaults, so none
+   is required). Ollama and Open WebUI still run
    separately (they're not part of this container).
 5. Verify it (no Open WebUI needed) — same check for both paths:
    ```bash

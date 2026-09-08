@@ -11,8 +11,21 @@
 services:
   api:
     build: .
+    # Optional: when a `.env` file exists (see `.env.example`) its values
+    # override the defaults below. A clean clone with no `.env` still
+    # starts zero-config using the free OSM provider.
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      - MAPS_PROVIDER=${MAPS_PROVIDER:-osm}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - BACKEND_API_URL=${BACKEND_API_URL:-http://localhost:8000}
+      - MAPS_REQUEST_TIMEOUT_SECONDS=${MAPS_REQUEST_TIMEOUT_SECONDS:-10}
+      - MAX_RESULTS=${MAX_RESULTS:-5}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-30}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080}
     ports:
       - "8000:8000"
     restart: unless-stopped

@@ -155,19 +155,6 @@ def test_find_places_cache_avoids_repeat_calls(
     assert client.places.call_count == 1
 
 
-def test_maps_client_shim_delegates() -> None:
-    """The backwards-compat shim delegates to GoogleMapsProvider."""
-    from api import maps_client
-
-    with patch.object(
-        google_provider, "_get_client", return_value=_mock_client(SAMPLE_RESPONSE)
-    ):
-        google_provider.clear_cache()
-        results = maps_client.find_places("sushi", "Malang")
-    assert results[0]["place_id"] == "abc123"
-    assert maps_client.NoResultsFoundError is NoResultsFoundError
-
-
 def test_find_nearby_success(provider: GoogleMapsProvider) -> None:
     """Nearby Search maps to a type and normalizes vicinity addresses."""
     with patch.object(

@@ -41,7 +41,7 @@ def to_embed_html(places: list[dict]) -> str:
     """Build an embed HTML fragment for the top result (place mode).
 
     Args:
-        places: Normalized place dicts from ``maps_client.find_places``.
+        places: Normalized place dicts from the provider ``find_places``.
 
     Returns:
         An HTML fragment with a Maps embed iframe, or a friendly
@@ -78,13 +78,6 @@ def to_directions_embed_html(origin: str, destination_place_id: str) -> str:
     """
     safe_origin = origin.strip()
     # Keyless directions embed via the universal dir URL.
-    params = urllib.parse.urlencode(
-        {
-            "api": "1",
-            "origin": safe_origin,
-            "destination": f"place_id:{destination_place_id.strip()}",
-        }
-    )
     # Rendered through the embed endpoint so it stays an inline iframe.
     src = "https://maps.google.com/maps?" + urllib.parse.urlencode(
         {
@@ -93,7 +86,6 @@ def to_directions_embed_html(origin: str, destination_place_id: str) -> str:
             "output": "embed",
         }
     )
-    _ = params  # documented share-link params kept for reference/audit
     logger.info("built directions embed from %r", safe_origin)
     return _embed_iframe(src, f"Directions from {safe_origin}")
 

@@ -1,7 +1,6 @@
 """Google Maps implementation of the places provider interface.
 
-Relocated here from the former ``api.maps_client`` module; behavior is
-unchanged. All Google Maps logic lives inside the backend — the Open
+All Google Maps logic lives inside the backend — the Open
 WebUI Tool never imports this module and never sees the API key.
 
 Billing note: every uncached ``find_places`` call is billable. A short

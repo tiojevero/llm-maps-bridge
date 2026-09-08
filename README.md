@@ -1,4 +1,4 @@
-# llm-places-finder
+# LLM Maps Bridge 📌
 
 **Ask a local LLM "sushi near me" — get a real map, not a hallucinated address.**
 
